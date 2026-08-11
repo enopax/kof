@@ -1,0 +1,13 @@
+FROM --platform=$BUILDPLATFORM golang:1.26.3 AS builder
+ARG TARGETOS TARGETARCH
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# Placeholder for the webapp/collector //go:embed dist (Makefile generate-dist target)
+RUN mkdir -p webapp/collector/dist && touch webapp/collector/dist/hello-world
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+FROM scratch
+COPY --from=builder /workspace/manager /manager
+USER 65532:65532
+ENTRYPOINT ["/manager"]
