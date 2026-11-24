@@ -80,6 +80,68 @@ var _ = Describe("Build helper functions", func() {
 	})
 })
 
+var _ = Describe("a write-only VMUser", func() {
+	// Der Zugang eines Kindclusters schreibt und liest nicht. Seine
+	// Zugangsdaten liegen im Kindcluster, und dessen kubeconfig geht an den
+	// Kunden - alles, was dieser Zugang darf, darf der Kunde. Gelesen wird in
+	// der Console, ueber einen eigenen Zugang. Siehe enopax/enopax#45.
+	cfg := &VMUserConfig{
+		ExtraLabel: &ExtraLabel{Key: "tenant", Value: "acme_web"},
+		WriteOnly:  true,
+	}
+
+	It("keeps every insert target", func() {
+		refs := buildTargetRefs(cfg)
+
+		paths := []string{}
+		for _, r := range refs {
+			paths = append(paths, r.Paths...)
+		}
+		Expect(paths).To(ConsistOf(vlAuditInsertPath, vlInsertPath, vmInsertPath, vtInsertPath))
+	})
+
+	It("drops every select target", func() {
+		refs := buildTargetRefs(cfg)
+
+		for _, r := range refs {
+			for _, p := range r.Paths {
+				Expect(p).NotTo(Or(
+					Equal(vlAuditSelectPath),
+					Equal(vlSelectPath),
+					Equal(vmSelectPath),
+					Equal(vtSelectPath),
+				))
+			}
+		}
+	})
+
+	It("still stamps the tenant on write", func() {
+		refs := buildTargetRefs(cfg)
+
+		var vmInsert *vmv1beta1.TargetRef
+		for i := range refs {
+			if refs[i].Paths[0] == vmInsertPath {
+				vmInsert = &refs[i]
+			}
+		}
+		Expect(vmInsert).NotTo(BeNil())
+		Expect(vmInsert.QueryArgs).To(HaveLen(1))
+		Expect(vmInsert.QueryArgs[0].Name).To(Equal("extra_label"))
+		Expect(vmInsert.QueryArgs[0].Values).To(ConsistOf("tenant=acme_web"))
+	})
+
+	It("leaves a reading user untouched", func() {
+		// Der Admin-Zugang des regionalen Clusters liest weiter - die
+		// Einschraenkung gilt nur, wo sie gesetzt wird.
+		reading := &VMUserConfig{
+			ExtraLabel:   &ExtraLabel{Key: "tenant", Value: "acme_web"},
+			ExtraFilters: map[string]string{"tenant": "acme_web"},
+		}
+		Expect(buildTargetRefs(reading)).To(HaveLen(8))
+		Expect(buildTargetRefs(cfg)).To(HaveLen(4))
+	})
+})
+
 var _ = Describe("buildQueryArgs and buildTargetRefs", func() {
 	Describe("buildQueryArgs with nil config", func() {
 		It("returns zero-value queryArgs", func() {

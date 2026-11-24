@@ -56,6 +56,14 @@ type VMUserConfig struct {
 	ExtraLabel *ExtraLabel
 	// ExtraFilters are additional filters to apply to VMUser target references.
 	ExtraFilters map[string]string
+	// WriteOnly drops the select targets, so the user can ship data but not read it.
+	//
+	// A child cluster needs to write: its collectors push metrics, logs and traces.
+	// It does not need to read - reading happens in the console, through an access
+	// of its own. The credentials of this user live *inside the child cluster*, and
+	// the child's kubeconfig is handed to the customer; everything this user may do,
+	// the customer may do. See enopax/enopax#45.
+	WriteOnly bool
 }
 
 type ExtraLabel struct {
@@ -70,7 +78,10 @@ const (
 
 // Password generation parameters
 const (
-	passwordLength = 16
+	// 32 Zeichen, nicht 16: dieser Zugang laeuft nicht ab, und bis
+	// enopax/enopax#45 wurde er beim Loeschen des Clusters nicht einmal
+	// entzogen. Dieselbe Laenge nimmt der Org-Lesezugang in provider-cluster.
+	passwordLength = 32
 )
 
 // Service URLs and Paths for VictoriaMetrics components
@@ -149,7 +160,15 @@ func (m *Manager) Delete(ctx context.Context, name, namespace string) error {
 		return fmt.Errorf("name cannot be empty")
 	}
 
-	if err := m.deleteResource(ctx, &kcmv1beta1.MultiClusterService{}, BuildMCSName(name), namespace); err != nil {
+	// Ohne Namespace: MultiClusterService ist clusterweit.
+	//
+	// Hier stand `namespace`, und damit ging der Loeschaufruf an einen Namen,
+	// den es so nicht gibt - er lief ins Leere, ohne Fehler. Auf dem
+	// regionalen Cluster standen deshalb vier `kof-vmuser-propagation-*` fuer
+	// Cluster, die es seit Stunden bis Monaten nicht mehr gab, und solange die
+	// Verteilung steht, legt Sveltos VMUser und Secret immer wieder neu an.
+	// Siehe enopax/enopax#45.
+	if err := m.deleteResource(ctx, &kcmv1beta1.MultiClusterService{}, BuildMCSName(name), ""); err != nil {
 		return fmt.Errorf("failed to delete MultiClusterService for VMUser %s: %w", BuildMCSName(name), err)
 	}
 
@@ -459,22 +478,31 @@ func buildTargetRefs(vmUserConfig *VMUserConfig) []vmv1beta1.TargetRef {
 	a := buildQueryArgs(vmUserConfig)
 
 	targets := []struct {
-		path string
-		url  string
-		args []vmv1beta1.QueryArg
+		path   string
+		url    string
+		args   []vmv1beta1.QueryArg
+		writes bool
 	}{
 		{path: vlAuditSelectPath, url: vlAuditSelectURL, args: a.vlSelectArgs},
-		{path: vlAuditInsertPath, url: vlAuditInsertURL, args: a.vlInsertArgs},
+		{path: vlAuditInsertPath, url: vlAuditInsertURL, args: a.vlInsertArgs, writes: true},
 		{path: vlSelectPath, url: vlSelectURL, args: a.vlSelectArgs},
-		{path: vlInsertPath, url: vlInsertURL, args: a.vlInsertArgs},
+		{path: vlInsertPath, url: vlInsertURL, args: a.vlInsertArgs, writes: true},
 		{path: vmSelectPath, url: vmSelectURL, args: a.vmSelectArgs},
-		{path: vmInsertPath, url: vmInsertURL, args: a.vmInsertArgs},
+		{path: vmInsertPath, url: vmInsertURL, args: a.vmInsertArgs, writes: true},
 		{path: vtSelectPath, url: vtSelectURL, args: a.vtSelectArgs},
-		{path: vtInsertPath, url: vtInsertURL, args: a.vtInsertArgs},
+		{path: vtInsertPath, url: vtInsertURL, args: a.vtInsertArgs, writes: true},
 	}
+
+	writeOnly := vmUserConfig != nil && vmUserConfig.WriteOnly
 
 	refs := make([]vmv1beta1.TargetRef, 0, len(targets))
 	for _, t := range targets {
+		// A write-only user gets no select target at all. Leaving it in with a
+		// tenant filter would still allow reading everything that carries the
+		// tenant - which is the whole project, not just this cluster.
+		if writeOnly && !t.writes {
+			continue
+		}
 		refs = append(refs, vmv1beta1.TargetRef{
 			Paths:  []string{t.path},
 			Static: &vmv1beta1.StaticRef{URL: t.url},
