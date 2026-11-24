@@ -103,9 +103,21 @@ func (c *ChildClusterRole) CreateVMUserCredentials(regionalClusterName string) e
 		tenantID = labels.DefaultTenantID
 	}
 	opts.ExtraLabels[labels.KofTenantLabel] = tenantID
+	// Schreibend, nicht lesend.
+	//
+	// Hier stand zusaetzlich `ExtraFilters`, und damit durfte dieser Zugang die
+	// Telemetrie seines Mandanten auch *lesen* - also die des ganzen Projekts,
+	// weil die Kennung `<org>_<projekt>` ist. Seine Zugangsdaten liegen im
+	// Kindcluster, und dessen kubeconfig geht an den Kunden: jeder mit
+	// Clusterzugang las damit die Messwerte aller Cluster des Projekts.
+	//
+	// Geschrieben wird weiter, und der Stempel bleibt - `ExtraLabel` setzt
+	// `tenant` beim Einfuegen, damit die Daten dem Mandanten zugeordnet
+	// bleiben. Gelesen wird in der Console, ueber einen eigenen Zugang.
+	// Siehe enopax/enopax#45.
 	opts.VMUserConfig = &vmuser.VMUserConfig{
-		ExtraFilters: map[string]string{"tenant": tenantID},
-		ExtraLabel:   &vmuser.ExtraLabel{Key: "tenant", Value: tenantID},
+		ExtraLabel: &vmuser.ExtraLabel{Key: "tenant", Value: tenantID},
+		WriteOnly:  true,
 	}
 
 	return c.vmUserManager.Create(c.ctx, opts)
