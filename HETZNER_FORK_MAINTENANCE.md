@@ -69,6 +69,63 @@ this diff by hand:
 +		HetznerRegionKey:     c.HetznerRegion,
 ```
 
+## Patch 2 — the child's telemetry access writes, and is revoked (enopax/enopax#45)
+
+**Also local, also mandatory on every upgrade.** The reason is not cosmetic: the
+access a child cluster uses to ship telemetry
+
+- could **read** as well, scoped to its tenant — and the tenant is
+  `<org>_<project>`, so that is the telemetry of every cluster in the project.
+  The credentials live *inside the child*, whose kubeconfig we hand to the
+  customer: everything this access may do, the customer may do.
+- was **never revoked** when the cluster was deleted. Four `kof-vmuser-*` for
+  long-gone clusters stood on the regional cluster; the newest still answered
+  `/api/v1/series?match[]=up&start=-7d` with 41 series.
+
+```
+internal/controller/vmuser/victoriametrics_user.go
+    + WriteOnly on VMUserConfig; buildTargetRefs drops the select targets
+      entirely — leaving them in with a tenant filter still allows reading
+      everything that carries the tenant
+    ~ Manager.Delete deletes the propagation MultiClusterService cluster-scoped.
+      It passed a namespace, and that object is cluster-scoped: the call hit
+      nothing and reported no error. THIS is why the orphans survived — as long
+      as the propagation stands, Sveltos re-creates VMUser and Secret.
+    ~ passwordLength 16 → 32
+
+internal/controller/clusterdeployment_kof_cluster_child_role.go
+    ~ the child's VMUserConfig: WriteOnly, no ExtraFilters
+
+internal/controller/clusterdeployment_controller.go
+    + CleanupChild(): propagation **and** access; the half-cleanup is unexported
+      so a future reconciler cannot call only one of them (the mutation fails to
+      compile, not a test)
+    ~ Reconcile calls CleanupChild for a deleted ClusterDeployment
+
+internal/controller/cleanup_child_telemetry_test.go      (new)
+internal/controller/vmuser/victoriametrics_user_test.go  (write-only cases)
+```
+
+Lives on `enopax/kof@build/kof-operator-v1.10.0-hetzner` (merged via
+enopax/kof#2); image `ghcr.io/enopax/kof-operator-controller:v1.10.0-hetzner.2`.
+The runbook in `enopax/cluster` pins it as blocker #12.
+
+**Verified in production on 2026-11-24** — in this order, because the first step
+is the one that can break:
+
+| | |
+|---|---|
+| live child `dev-box1` | 4 target refs, all insert; select → `400`, insert → `204` |
+| fresh access | 4 insert refs, 32-character password |
+| cluster deleted | VMUser, both secrets, Helm releases and propagation gone within ~2 min, unaided |
+
+Existing accesses keep their 16-character password — the operator does not
+rotate one that exists; they change when the access is recreated.
+
+Upstream would probably take the revocation (nobody profits from keeping dead
+credentials) and possibly the write-only default. Until it does: re-apply, and
+re-verify with a cluster, not with the code.
+
 ## Upgrade procedure (run this for EVERY new KOF version)
 
 Let `X.Y.Z` be the new upstream KOF version (e.g. `1.11.0`).
