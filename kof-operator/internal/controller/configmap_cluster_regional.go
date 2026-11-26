@@ -182,6 +182,23 @@ func (c *RegionalClusterConfigMap) CreateMcsForVmRulesPropagation() error {
 		return nil
 	}
 
+	// Die Referenzen gehoeren in `provider.config`, nicht an die abgekuendigte
+	// Stelle in der ServiceSpec - siehe k8s.StateManagementProvider.
+	provider, err := k8s.StateManagementProvider([]addoncontrollerv1beta1.TemplateResourceRef{
+		{
+			Identifier: "vmRules",
+			Resource: corev1.ObjectReference{
+				APIVersion: "v1",
+				Kind:       "ConfigMap",
+				Name:       vmRulesConfigMapNamePrefix + c.clusterName,
+				Namespace:  c.clusterNamespace,
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to build provider config for '%s' cluster: %v", c.clusterName, err)
+	}
+
 	mcs := &kcmv1beta1.MultiClusterService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: GetVmRulesMcsPropagationName(c.configMap.Name),
@@ -198,23 +215,13 @@ func (c *RegionalClusterConfigMap) CreateMcsForVmRulesPropagation() error {
 				},
 			},
 			ServiceSpec: kcmv1beta1.ServiceSpec{
+				Provider: provider,
 				Services: []kcmv1beta1.Service{
 					{
 						Name:      names.FNVName("kof-vm-rules", fmt.Sprintf("%s/%s", c.clusterNamespace, c.clusterName)),
 						Template:  env.GetPropagationTemplateName(),
 						Namespace: k8s.KofNamespace,
 						Values:    "propagation:\n  enabled: true\n  data: |\n{{ removeField \"vmRules\" \"metadata.ownerReferences\" | nindent 14 }}\n",
-					},
-				},
-				TemplateResourceRefs: []addoncontrollerv1beta1.TemplateResourceRef{
-					{
-						Identifier: "vmRules",
-						Resource: corev1.ObjectReference{
-							APIVersion: "v1",
-							Kind:       "ConfigMap",
-							Name:       vmRulesConfigMapNamePrefix + c.clusterName,
-							Namespace:  c.clusterNamespace,
-						},
 					},
 				},
 			},

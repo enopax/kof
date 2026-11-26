@@ -247,6 +247,45 @@ var _ = Describe("VMUser Manager - MCS Update Tests", func() {
 		Expect(mcs.Spec.ClusterSelector.MatchLabels).To(Equal(opts.MCSConfig.ClusterSelector.MatchLabels))
 	})
 
+	It("should name a state management provider, as k0rdent 1.13 requires", func() {
+		// Die MCS-CRD von k0rdent 1.13 traegt minProperties: 1 an
+		// spec.serviceSpec.provider. Ein leeres Feld laesst jedes **neue**
+		// Objekt an der Admission scheitern, waehrend die bestehenden
+		// weiterlaufen - Kubernetes erzwingt eine neu hinzugekommene Regel an
+		// einem unveraenderten Feld nicht. Deshalb faellt es nur beim Anlegen
+		// eines Clusters auf, und dann nimmt KOF ihn gar nicht auf:
+		// enopax/enopax#55.
+		opts := &CreateOptions{
+			Name:      "provider-cluster",
+			Namespace: "test-ns",
+			MCSConfig: &MCSConfig{
+				ClusterSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"role": "regional"},
+				},
+			},
+		}
+
+		err := manager.createOrUpdatePropagationMCS(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		mcs := &kcmv1beta1.MultiClusterService{}
+		err = fakeClient.Get(ctx, client.ObjectKey{Name: BuildMCSName(opts.Name)}, mcs)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcs.Spec.ServiceSpec.Provider.Name).To(Equal("ksm-projectsveltos"))
+
+		// Und die Referenzen muessen **dort** stehen, nicht an der
+		// abgekuendigten Stelle: k0rdent 1.13 reicht
+		// spec.serviceSpec.templateResourceRefs nicht mehr weiter, das
+		// erzeugte ServiceSet traegt dann keine Referenzen, und die Vorlage
+		// `{{ removeField "vmuser" ... }}` loest ins Leere auf - lautlos, mit
+		// einem Helm-Release, das sich `deployed` nennt und leer ist.
+		Expect(mcs.Spec.ServiceSpec.TemplateResourceRefs).To(BeEmpty())
+		Expect(mcs.Spec.ServiceSpec.Provider.Config).NotTo(BeNil())
+		Expect(string(mcs.Spec.ServiceSpec.Provider.Config.Raw)).To(ContainSubstring("templateResourceRefs"))
+		Expect(string(mcs.Spec.ServiceSpec.Provider.Config.Raw)).To(ContainSubstring("vmuser"))
+		Expect(string(mcs.Spec.ServiceSpec.Provider.Config.Raw)).To(ContainSubstring("secret"))
+	})
+
 	It("should not update MCS if spec has not changed", func() {
 		opts := &CreateOptions{
 			Name:      "test-cluster",
