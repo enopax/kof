@@ -272,6 +272,18 @@ var _ = Describe("VMUser Manager - MCS Update Tests", func() {
 		err = fakeClient.Get(ctx, client.ObjectKey{Name: BuildMCSName(opts.Name)}, mcs)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(mcs.Spec.ServiceSpec.Provider.Name).To(Equal("ksm-projectsveltos"))
+
+		// Und die Referenzen muessen **dort** stehen, nicht an der
+		// abgekuendigten Stelle: k0rdent 1.13 reicht
+		// spec.serviceSpec.templateResourceRefs nicht mehr weiter, das
+		// erzeugte ServiceSet traegt dann keine Referenzen, und die Vorlage
+		// `{{ removeField "vmuser" ... }}` loest ins Leere auf - lautlos, mit
+		// einem Helm-Release, das sich `deployed` nennt und leer ist.
+		Expect(mcs.Spec.ServiceSpec.TemplateResourceRefs).To(BeEmpty())
+		Expect(mcs.Spec.ServiceSpec.Provider.Config).NotTo(BeNil())
+		Expect(string(mcs.Spec.ServiceSpec.Provider.Config.Raw)).To(ContainSubstring("templateResourceRefs"))
+		Expect(string(mcs.Spec.ServiceSpec.Provider.Config.Raw)).To(ContainSubstring("vmuser"))
+		Expect(string(mcs.Spec.ServiceSpec.Provider.Config.Raw)).To(ContainSubstring("secret"))
 	})
 
 	It("should not update MCS if spec has not changed", func() {

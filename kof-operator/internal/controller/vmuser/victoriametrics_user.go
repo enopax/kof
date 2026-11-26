@@ -249,21 +249,39 @@ func (m *Manager) createOrUpdatePropagationMCS(ctx context.Context, opts *Create
 		},
 	}
 
+	// Die Referenzen gehoeren in `provider.config`, nicht an die abgekuendigte
+	// Stelle in der ServiceSpec - siehe k8s.StateManagementProvider.
+	provider, err := k8s.StateManagementProvider([]addoncontrollerv1beta1.TemplateResourceRef{
+		{
+			Identifier: "vmuser",
+			Resource: corev1.ObjectReference{
+				APIVersion: vmv1beta1.SchemeGroupVersion.String(),
+				Kind:       "VMUser",
+				Name:       BuildVMUserName(opts.Name),
+				Namespace:  opts.Namespace,
+			},
+		},
+		{
+			Identifier: "secret",
+			Resource: corev1.ObjectReference{
+				APIVersion: corev1.SchemeGroupVersion.String(),
+				Kind:       "Secret",
+				Name:       BuildSecretName(opts.Name),
+				Namespace:  opts.Namespace,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+
 	op, err := controllerutil.CreateOrUpdate(ctx, m.client, mcs, func() error {
 		mcs.Labels = getLabels(opts.ExtraLabels)
 		mcs.Spec = kcmv1beta1.MultiClusterServiceSpec{
 			ClusterSelector: opts.MCSConfig.ClusterSelector,
 			DependsOn:       opts.MCSConfig.DependsOn,
 			ServiceSpec: kcmv1beta1.ServiceSpec{
-				// k0rdent 1.13 verlangt hier mindestens ein Feld
-				// (minProperties: 1 an der MultiClusterService-CRD). Ohne das
-				// weist die Admission jedes **neue** Objekt ab, waehrend die
-				// bestehenden weiterlaufen - Kubernetes erzwingt eine neu
-				// hinzugekommene Regel an einem unveraenderten Feld nicht.
-				// Siehe enopax/enopax#55.
-				Provider: kcmv1beta1.StateManagementProviderConfig{
-					Name: env.GetStateManagementProviderName(),
-				},
+				Provider: provider,
 				Services: []kcmv1beta1.Service{
 					{
 						Name:      BuildVMUserName(opts.Name),
@@ -291,26 +309,6 @@ func (m *Manager) createOrUpdatePropagationMCS(ctx context.Context, opts *Create
 							UpgradeOptions: &addoncontrollerv1beta1.HelmUpgradeOptions{
 								TakeOwnership: true,
 							},
-						},
-					},
-				},
-				TemplateResourceRefs: []addoncontrollerv1beta1.TemplateResourceRef{
-					{
-						Identifier: "vmuser",
-						Resource: corev1.ObjectReference{
-							APIVersion: vmv1beta1.SchemeGroupVersion.String(),
-							Kind:       "VMUser",
-							Name:       BuildVMUserName(opts.Name),
-							Namespace:  opts.Namespace,
-						},
-					},
-					{
-						Identifier: "secret",
-						Resource: corev1.ObjectReference{
-							APIVersion: corev1.SchemeGroupVersion.String(),
-							Kind:       "Secret",
-							Name:       BuildSecretName(opts.Name),
-							Namespace:  opts.Namespace,
 						},
 					},
 				},

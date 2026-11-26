@@ -514,6 +514,25 @@ func (c *ChildClusterRole) CreateConfigMapPropagation() error {
 		return nil
 	}
 
+	// Die Referenzen gehoeren in `provider.config`, nicht an die abgekuendigte
+	// Stelle in der ServiceSpec - sonst kommen sie im erzeugten ServiceSet
+	// nicht an und die Vorlage loest ins Leere auf. Siehe
+	// k8s.StateManagementProvider.
+	provider, err := k8s.StateManagementProvider([]addoncontrollerv1beta1.TemplateResourceRef{
+		{
+			Identifier: "childConfig",
+			Resource: corev1.ObjectReference{
+				APIVersion: "v1",
+				Kind:       "ConfigMap",
+				Name:       GetConfigMapName(c.clusterName),
+				Namespace:  c.clusterNamespace,
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to build provider config for '%s' cluster: %v", c.clusterName, err)
+	}
+
 	mcs := &kcmv1beta1.MultiClusterService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: GetChildConfigMapPropagationName(c.clusterName),
@@ -530,32 +549,13 @@ func (c *ChildClusterRole) CreateConfigMapPropagation() error {
 				},
 			},
 			ServiceSpec: kcmv1beta1.ServiceSpec{
-				// k0rdent 1.13 verlangt hier mindestens ein Feld
-				// (minProperties: 1 an der MultiClusterService-CRD). Ohne das
-				// weist die Admission jedes **neue** Objekt ab, waehrend die
-				// bestehenden weiterlaufen - Kubernetes erzwingt eine neu
-				// hinzugekommene Regel an einem unveraenderten Feld nicht.
-				// Siehe enopax/enopax#55.
-				Provider: kcmv1beta1.StateManagementProviderConfig{
-					Name: env.GetStateManagementProviderName(),
-				},
+				Provider: provider,
 				Services: []kcmv1beta1.Service{
 					{
 						Name:      names.FNVName("kof-child-config", fmt.Sprintf("%s/%s", c.clusterNamespace, c.clusterName)),
 						Template:  env.GetPropagationTemplateName(),
 						Namespace: k8s.KofNamespace,
 						Values:    "propagation:\n  enabled: true\n  data: |\n{{ removeField \"childConfig\" \"metadata.ownerReferences\" | nindent 14 }}\n",
-					},
-				},
-				TemplateResourceRefs: []addoncontrollerv1beta1.TemplateResourceRef{
-					{
-						Identifier: "childConfig",
-						Resource: corev1.ObjectReference{
-							APIVersion: "v1",
-							Kind:       "ConfigMap",
-							Name:       GetConfigMapName(c.clusterName),
-							Namespace:  c.clusterNamespace,
-						},
 					},
 				},
 			},
