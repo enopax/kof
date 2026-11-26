@@ -61,14 +61,43 @@ spec:
     services:
       {{- $version := $.Chart.Version | replace "." "-" }}
 
+      - name: kof-crds
+        namespace: {{ $.Release.Namespace }}
+        template: kof-crds-{{ $version }}
+        templateChain: kof-crds-{{ $version }}
+
+      {{- if not $istio }}
+      - name: kof-coredns
+        namespace: {{ $.Release.Namespace }}
+        template: kof-coredns-{{ $version }}
+        templateChain: kof-coredns-{{ $version }}
+        dependsOn:
+          - name: kof-crds
+            namespace: {{ $.Release.Namespace }}
+        values: |
+          {{`{{ $regionalDomain := .Cluster.metadata | dig "annotations" "k0rdent.mirantis.com/kof-regional-domain" "" }}`}}
+          {{`{{ $corednsValuesFromAnnotation := .Cluster.metadata | dig "annotations" "k0rdent.mirantis.com/kof-coredns-values" "{}" | fromYaml }}`}}
+          {{`{{`}} $corednsValuesHere := `
+          enabled: true
+          forwardZones:
+            - domain: {regionalDomain}
+              dnsServers:
+                - 8.8.8.8
+                - 8.8.4.4
+          ` | replace "{regionalDomain}" $regionalDomain | fromYaml {{`}}`}}
+          {{`{{ mergeOverwrite (dict) $corednsValuesHere $corednsValuesFromAnnotation | toYaml | nindent 4 }}`}}
+      {{- end }}
+
       {{- if and (not $istio) (index $.Values "cert-manager" "enabled") }}
       - name: cert-manager
         namespace: {{ $.Release.Namespace }}
         template: {{ index $.Values "cert-manager" "template" }}
         helmOptions:
           wait: true
-        {{- if $envoyGatewayEnabled }}
         dependsOn:
+          - name: kof-crds
+            namespace: {{ $.Release.Namespace }}
+        {{- if $envoyGatewayEnabled }}
           - name: envoy-gateway
             namespace: {{ $.Release.Namespace }}
         {{- end }}
@@ -147,6 +176,29 @@ spec:
           {{`{{`}} $envoyGatewayValuesFromHelm := `{{ index $.Values "envoy-gateway" "values" | toYaml | nindent 10 }}` | fromYaml {{`}}`}}
           {{`{{`}} $globalValuesFromHelm := `{{ $globalGlobal | toYaml | nindent 10 }}` | fromYaml {{`}}`}}
           {{`{{`}} mergeOverwrite (dict) $globalValuesFromHelm $envoyGatewayValuesFromHelm $envoyGatewayValuesHere $envoyGatewayValuesFromAnnotation | toYaml | nindent 4 {{`}}`}}
+      {{- end }}
+
+      {{- if $envoyGatewayEnabled }}
+      - name: kof-external-dns
+        namespace: {{ $.Release.Namespace }}
+        template: kof-external-dns-{{ $version }}
+        templateChain: kof-external-dns-{{ $version }}
+        dependsOn:
+          - name: kof-crds
+            namespace: {{ $.Release.Namespace }}
+          - name: envoy-gateway
+            namespace: {{ $.Release.Namespace }}
+        values: |
+          {{`{{ $regionalDomain := .Cluster.metadata | dig "annotations" "k0rdent.mirantis.com/kof-regional-domain" "" }}`}}
+          {{`{{ $externalDnsValuesFromAnnotation := .Cluster.metadata | dig "annotations" "k0rdent.mirantis.com/kof-external-dns-values" "{}" | fromYaml }}`}}
+          {{`{{`}} $externalDnsValuesHere := `
+          enabled: true
+          domainFilter: {regionalDomain}
+          txtOwnerId: {clusterName}
+          source: gateway-httproute
+          ` | replace "{regionalDomain}" $regionalDomain | replace "{clusterName}" .Cluster.metadata.name | fromYaml {{`}}`}}
+          {{`{{`}} $globalValuesFromHelm := `{{ $globalGlobal | toYaml | nindent 10 }}` | fromYaml {{`}}`}}
+          {{`{{ mergeOverwrite (dict) $globalValuesFromHelm $externalDnsValuesHere $externalDnsValuesFromAnnotation | toYaml | nindent 4 }}`}}
       {{- end }}
 
       {{- $dependsOnList := list }}
@@ -275,6 +327,8 @@ spec:
                   current: {}
                 filters: {}
                 istio_dashboard_enabled: {{ $istio }}
+          envoyProxy:
+            enabled: {{ $gatewayManaged }}
           gatewayClass:
             enabled: {{ $gatewayManaged }}
           gateway:
@@ -293,6 +347,15 @@ spec:
                     certificateRefs:
                     - kind: Secret
                       name: eg-https
+                - name: https-grafana
+                  protocol: HTTPS
+                  port: 443
+                  hostname: {grafanaHost}
+                  tls:
+                    mode: Terminate
+                    certificateRefs:
+                    - kind: Secret
+                      name: eg-https-grafana
         {{- if $istio }}
           istio_endpoints: true
         {{- else }}
@@ -328,8 +391,6 @@ spec:
             gateway:
               enabled: {{ $gatewayEnabled }}
               httpRoute:
-                metadata:
-                  name: grafana
                 spec:
                   parentRefs:
                     - name: {gatewayName}
