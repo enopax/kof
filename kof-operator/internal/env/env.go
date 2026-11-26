@@ -56,6 +56,23 @@ func GetChildMCSName() string {
 	return GetEnvOrDefault("KOF_CHILD_CLUSTER_MCS_NAME", "kof-child-cluster")
 }
 
+// GetStateManagementProviderName returns the name of the StateManagementProvider
+// that MultiClusterServices created by this operator are deployed with.
+//
+// k0rdent 1.13 tightened the MultiClusterService CRD: spec.serviceSpec.provider
+// carries minProperties: 1, and this operator left the field empty. Objects
+// created before the upgrade keep working, because Kubernetes does not enforce
+// a newly added validation on a field that does not change - so the breakage
+// only shows up when a cluster is created, and then KOF cannot onboard it at
+// all (enopax/enopax#55).
+//
+// The default is the same name KCM uses for its own built-in provider
+// (internal/util/kube.DefaultStateManagementProvider), which is not importable
+// from here. The env var exists for installations that run a different one.
+func GetStateManagementProviderName() string {
+	return GetEnvOrDefault("KOF_STATE_MANAGEMENT_PROVIDER", "ksm-projectsveltos")
+}
+
 // GetIstioRegionalMCSName returns the name of the regional MultiClusterService for Istio clusters
 func GetIstioRegionalMCSName() string {
 	return GetEnvOrDefault("KOF_ISTIO_REGIONAL_CLUSTER_MCS_NAME", "kof-istio-regional-cluster")

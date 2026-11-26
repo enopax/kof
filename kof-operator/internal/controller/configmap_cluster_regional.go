@@ -198,6 +198,15 @@ func (c *RegionalClusterConfigMap) CreateMcsForVmRulesPropagation() error {
 				},
 			},
 			ServiceSpec: kcmv1beta1.ServiceSpec{
+				// k0rdent 1.13 verlangt hier mindestens ein Feld
+				// (minProperties: 1 an der MultiClusterService-CRD). Ohne das
+				// weist die Admission jedes **neue** Objekt ab, waehrend die
+				// bestehenden weiterlaufen - Kubernetes erzwingt eine neu
+				// hinzugekommene Regel an einem unveraenderten Feld nicht.
+				// Siehe enopax/enopax#55.
+				Provider: kcmv1beta1.StateManagementProviderConfig{
+					Name: env.GetStateManagementProviderName(),
+				},
 				Services: []kcmv1beta1.Service{
 					{
 						Name:      names.FNVName("kof-vm-rules", fmt.Sprintf("%s/%s", c.clusterNamespace, c.clusterName)),

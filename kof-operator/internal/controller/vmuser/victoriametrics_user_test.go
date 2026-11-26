@@ -247,6 +247,33 @@ var _ = Describe("VMUser Manager - MCS Update Tests", func() {
 		Expect(mcs.Spec.ClusterSelector.MatchLabels).To(Equal(opts.MCSConfig.ClusterSelector.MatchLabels))
 	})
 
+	It("should name a state management provider, as k0rdent 1.13 requires", func() {
+		// Die MCS-CRD von k0rdent 1.13 traegt minProperties: 1 an
+		// spec.serviceSpec.provider. Ein leeres Feld laesst jedes **neue**
+		// Objekt an der Admission scheitern, waehrend die bestehenden
+		// weiterlaufen - Kubernetes erzwingt eine neu hinzugekommene Regel an
+		// einem unveraenderten Feld nicht. Deshalb faellt es nur beim Anlegen
+		// eines Clusters auf, und dann nimmt KOF ihn gar nicht auf:
+		// enopax/enopax#55.
+		opts := &CreateOptions{
+			Name:      "provider-cluster",
+			Namespace: "test-ns",
+			MCSConfig: &MCSConfig{
+				ClusterSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"role": "regional"},
+				},
+			},
+		}
+
+		err := manager.createOrUpdatePropagationMCS(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		mcs := &kcmv1beta1.MultiClusterService{}
+		err = fakeClient.Get(ctx, client.ObjectKey{Name: BuildMCSName(opts.Name)}, mcs)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcs.Spec.ServiceSpec.Provider.Name).To(Equal("ksm-projectsveltos"))
+	})
+
 	It("should not update MCS if spec has not changed", func() {
 		opts := &CreateOptions{
 			Name:      "test-cluster",
