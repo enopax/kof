@@ -6,6 +6,7 @@ const (
 	Docker    string = "docker"
 	GCP       string = "gcp"
 	Hetzner   string = "hetzner"
+	StackIT   string = "stackit"
 	OpenStack string = "openstack"
 	VSphere   string = "vsphere"
 	Remote    string = "k0sproject-k0smotron"
@@ -14,7 +15,7 @@ const (
 
 func IsValidName(cloud string) bool {
 	switch cloud {
-	case AWS, Azure, Docker, GCP, Hetzner, OpenStack, VSphere, Remote, Adopted:
+	case AWS, Azure, Docker, GCP, Hetzner, StackIT, OpenStack, VSphere, Remote, Adopted:
 		return true
 	default:
 		return false
