@@ -78,6 +78,7 @@ const AzureLocationKey = "azure_location"
 const OpenstackRegionKey = "openstack_region"
 const VSphereDatacenterKey = "vsphere_datacenter"
 const HetznerRegionKey = "hetzner_region"
+const StackitRegionKey = "stackit_region"
 
 const KofRoleChild = "child"
 const KofRoleRegional = "regional"
@@ -145,6 +146,12 @@ func locationIsTheSame(cloudName string, c1, c2 *ClusterDeploymentConfig) bool {
 	case cloud.AWS:
 		return c1.Region == c2.Region
 	case cloud.Hetzner:
+		return c1.Region == c2.Region
+	case cloud.StackIT:
+		// Wie bei Hetzner und AWS: der Standort steht als `region` oben in der
+		// Konfiguration (`eu01`). Die Verfuegbarkeitszone steht an der
+		// MachineTemplate und gehoert nicht hierher - zwei Kinder in eu01-1 und
+		// eu01-2 sind am selben Ort.
 		return c1.Region == c2.Region
 	case cloud.Azure:
 		return c1.Location == c2.Location
